@@ -29,6 +29,7 @@ class Php < Formula
     "TCL",                   # 7
     "Zlib",                  # 8
   ]
+  revision 1
   compatibility_version 1
 
   livecheck do
@@ -37,12 +38,12 @@ class Php < Formula
   end
 
   bottle do
-    sha256 arm64_tahoe:   "aacdf961af3ad69cfaf33e33267546c3ef99d280738796561d08eac3f169c8f5"
-    sha256 arm64_sequoia: "b20c7966351979394f7454a76065e9f4801c27cfd90191827e786b7182fd456b"
-    sha256 arm64_sonoma:  "401d47e66a10f989074becbb87ea9512d3e261384f1c791d7298ad1d5d647c58"
-    sha256 sonoma:        "bb3244af1fb4774a567e372827076230f456c09d82efce50721c11e3048158d7"
-    sha256 arm64_linux:   "713b072e65d4879b3c66a4b6a41e7573052c3a015a370562f8d854c300b3a8ab"
-    sha256 x86_64_linux:  "a099b6ab78a24cf91e9415708e077c0f74b0a543d6ae4bd38ff30cdb9b43fbd4"
+    sha256 arm64_tahoe:   "56968bfffa52118efb0130ca6638a610cb0a17bd67fd4d38570d11e9ef391c2f"
+    sha256 arm64_sequoia: "59d1931f4bae8067d317767b62474c6e0809592b7cbfa801f5abbc78416eadd0"
+    sha256 arm64_sonoma:  "b738e4677403307d065bded2104a624eefd67f49d5cbefcca6d68475111c7167"
+    sha256 sonoma:        "6ee64d3ba5e99542294c89395fa0841d56ac695d3279b3535ef45c16d55a75e6"
+    sha256 arm64_linux:   "0e80956b8a005e56692fb49404951bd852613e4101fc22ace4ea3060fa2e298a"
+    sha256 x86_64_linux:  "2539c0ed1ca2fd02fd559eaa000f75e40ec09c47a1579f0ba83ce52ab7a8b2de"
   end
 
   head do
@@ -69,7 +70,7 @@ class Php < Formula
   depends_on "net-snmp"
   depends_on "oniguruma"
   depends_on "openldap"
-  depends_on "openssl@3"
+  depends_on "openssl@4"
   depends_on "pcre2"
   depends_on "sqlite"
   depends_on "tidy-html5"
@@ -89,6 +90,9 @@ class Php < Formula
   on_linux do
     depends_on "zlib-ng-compat"
   end
+
+  # Backport OpenSSL 4 compatibility from upstream PHP-8.5.
+  patch :DATA
 
   def install
     system "./buildconf", "--force" if build.head?
@@ -232,7 +236,7 @@ class Php < Formula
       s.gsub! %r{; ?extension_dir = "\./"}, "extension_dir = \"#{HOMEBREW_PREFIX}/lib/php/pecl/#{orig_ext_dir}\""
 
       # Use OpenSSL cert bundle
-      openssl = Formula["openssl@3"]
+      openssl = Formula["openssl@4"]
       s.gsub!(/; ?openssl\.cafile=/, "openssl.cafile = \"#{openssl.pkgetc}/cert.pem\"")
       s.gsub!(/; ?openssl\.capath=/, "openssl.capath = \"#{openssl.pkgetc}/certs\"")
     end
@@ -423,3 +427,121 @@ class Php < Formula
     end
   end
 end
+
+__END__
+diff --git a/ext/openssl/openssl.c b/ext/openssl/openssl.c
+--- a/ext/openssl/openssl.c
++++ b/ext/openssl/openssl.c
+@@ -218,9 +218,9 @@ void php_openssl_store_errors(void)
+ 	errors = OPENSSL_G(errors);
+ 
+ 	do {
+-		errors->top = (errors->top + 1) % ERR_NUM_ERRORS;
++		errors->top = (errors->top + 1) % PHP_OPENSSL_ERR_BUFFER_SIZE;
+ 		if (errors->top == errors->bottom) {
+-			errors->bottom = (errors->bottom + 1) % ERR_NUM_ERRORS;
++			errors->bottom = (errors->bottom + 1) % PHP_OPENSSL_ERR_BUFFER_SIZE;
+ 		}
+ 		errors->buffer[errors->top] = error_code;
+ 	} while ((error_code = ERR_get_error()));
+@@ -4035,7 +4035,7 @@ PHP_FUNCTION(openssl_error_string)
+ 		RETURN_FALSE;
+ 	}
+ 
+-	OPENSSL_G(errors)->bottom = (OPENSSL_G(errors)->bottom + 1) % ERR_NUM_ERRORS;
++	OPENSSL_G(errors)->bottom = (OPENSSL_G(errors)->bottom + 1) % PHP_OPENSSL_ERR_BUFFER_SIZE;
+ 	val = OPENSSL_G(errors)->buffer[OPENSSL_G(errors)->bottom];
+ 
+ 	if (val) {
+diff --git a/ext/openssl/openssl_backend_common.c b/ext/openssl/openssl_backend_common.c
+--- a/ext/openssl/openssl_backend_common.c
++++ b/ext/openssl/openssl_backend_common.c
+@@ -110,7 +110,7 @@ void php_openssl_add_assoc_name_entry(zval * val, char * key, X509_NAME * name,
+ 
+ void php_openssl_add_assoc_asn1_string(zval * val, char * key, ASN1_STRING * str)
+ {
+-	add_assoc_stringl(val, key, (char *)str->data, str->length);
++	add_assoc_stringl(val, key, (const char *)ASN1_STRING_get0_data(str), ASN1_STRING_length(str));
+ }
+ 
+ time_t php_openssl_asn1_time_to_time_t(ASN1_UTCTIME * timestr)
+@@ -142,12 +142,12 @@ time_t php_openssl_asn1_time_to_time_t(ASN1_UTCTIME * timestr)
+ 	}
+ 
+ 	if (timestr_len < 13) {
+-		php_error_docref(NULL, E_WARNING, "Unable to parse time string %s correctly", timestr->data);
++		php_error_docref(NULL, E_WARNING, "Unable to parse time string %s correctly", ASN1_STRING_get0_data(timestr));
+ 		return (time_t)-1;
+ 	}
+ 
+ 	if (ASN1_STRING_type(timestr) == V_ASN1_GENERALIZEDTIME && timestr_len < 15) {
+-		php_error_docref(NULL, E_WARNING, "Unable to parse time string %s correctly", timestr->data);
++		php_error_docref(NULL, E_WARNING, "Unable to parse time string %s correctly", ASN1_STRING_get0_data(timestr));
+ 		return (time_t)-1;
+ 	}
+ 
+@@ -630,8 +630,8 @@ static int openssl_x509v3_subjectAltName(BIO *bio, X509_EXTENSION *extension)
+ 	}
+ 
+ 	extension_data = X509_EXTENSION_get_data(extension);
+-	p = extension_data->data;
+-	length = extension_data->length;
++	p = ASN1_STRING_get0_data(extension_data);
++	length = ASN1_STRING_length(extension_data);
+ 	if (method->it) {
+ 		names = (GENERAL_NAMES*) (ASN1_item_d2i(NULL, &p, length,
+ 			ASN1_ITEM_ptr(method->it)));
+diff --git a/ext/openssl/php_openssl.h b/ext/openssl/php_openssl.h
+--- a/ext/openssl/php_openssl.h
++++ b/ext/openssl/php_openssl.h
+@@ -36,6 +36,8 @@ extern zend_module_entry openssl_module_entry;
+ #define PHP_OPENSSL_API_VERSION 0x30200
+ #endif
+ 
++#define PHP_OPENSSL_ERR_BUFFER_SIZE 16
++
+ #define OPENSSL_RAW_DATA 1
+ #define OPENSSL_ZERO_PADDING 2
+ #define OPENSSL_DONT_ZERO_PAD_KEY 4
+@@ -65,7 +67,7 @@ extern zend_module_entry openssl_module_entry;
+ #endif
+ 
+ struct php_openssl_errors {
+-	int buffer[ERR_NUM_ERRORS];
++	int buffer[PHP_OPENSSL_ERR_BUFFER_SIZE];
+ 	int top;
+ 	int bottom;
+ };
+diff --git a/ext/openssl/xp_ssl.c b/ext/openssl/xp_ssl.c
+--- a/ext/openssl/xp_ssl.c
++++ b/ext/openssl/xp_ssl.c
+@@ -495,12 +495,12 @@ static bool php_openssl_matches_san_list(X509 *peer, const char *subject_name)
+ 			}
+ 			OPENSSL_free(cert_name);
+ 		} else if (san->type == GEN_IPADD) {
+-			if (san->d.iPAddress->length == 4) {
++			if (ASN1_STRING_length(san->d.iPAddress) == 4) {
+ 				snprintf(ipbuffer, sizeof(ipbuffer), "%d.%d.%d.%d",
+-					san->d.iPAddress->data[0],
+-					san->d.iPAddress->data[1],
+-					san->d.iPAddress->data[2],
+-					san->d.iPAddress->data[3]
++					ASN1_STRING_get0_data(san->d.iPAddress)[0],
++					ASN1_STRING_get0_data(san->d.iPAddress)[1],
++					ASN1_STRING_get0_data(san->d.iPAddress)[2],
++					ASN1_STRING_get0_data(san->d.iPAddress)[3]
+ 				);
+ 				if (strcasecmp(subject_name, (const char*)ipbuffer) == 0) {
+ 					sk_GENERAL_NAME_pop_free(alt_names, GENERAL_NAME_free);
+@@ -509,9 +509,9 @@ static bool php_openssl_matches_san_list(X509 *peer, const char *subject_name)
+ 				}
+ 			}
+ #ifdef HAVE_IPV6_SAN
+-			else if (san->d.ip->length == 16 && subject_name_is_ipv6) {
++			else if (ASN1_STRING_length(san->d.ip) == 16 && subject_name_is_ipv6) {
+ 				ipbuffer[0] = 0;
+-				EXPAND_IPV6_ADDRESS(ipbuffer, san->d.iPAddress->data);
++				EXPAND_IPV6_ADDRESS(ipbuffer, ASN1_STRING_get0_data(san->d.iPAddress));
+ 				if (strcasecmp((const char*)subject_name_ipv6_expanded, (const char*)ipbuffer) == 0) {
+ 					sk_GENERAL_NAME_pop_free(alt_names, GENERAL_NAME_free);
+ 
