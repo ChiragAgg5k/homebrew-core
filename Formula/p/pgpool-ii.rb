@@ -44,7 +44,6 @@ class PgpoolIi < Formula
     end
     etc.install etc/"pgpool.conf.sample" => "pgpool.conf"
 
-    (var/"log").mkpath
     (var/"pgpool-ii").mkpath
   end
 
