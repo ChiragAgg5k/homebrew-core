@@ -151,7 +151,6 @@ class KnotResolver < Formula
     pkgetc.install "etc/config/config.yaml"
 
     (var/"cache/knot-resolver").mkpath
-    (var/"run/knot-resolver").mkpath
   end
 
   service do
