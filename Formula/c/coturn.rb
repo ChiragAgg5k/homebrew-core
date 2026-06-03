@@ -4,6 +4,7 @@ class Coturn < Formula
   url "https://github.com/coturn/coturn/archive/refs/tags/4.12.0.tar.gz"
   sha256 "8dc2d514f1a2beb7e2e609845d6ff37308f584fbc0e20e9d0797bb1f86d65aa6"
   license "BSD-3-Clause"
+  revision 1
 
   livecheck do
     url :stable
