@@ -34,7 +34,6 @@ class Cryptography < Formula
   end
 
   def install
-    # TODO: Avoid building multiple times as binaries are already built in limited API mode
     pythons.each do |python3|
       system python3, "-m", "pip", "install", *std_pip_args, "."
     end
